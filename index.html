@@ -796,6 +796,12 @@ async function loadFromSupabase() {
   if (error && error.code !== 'PGRST116') throw error;
   if (data) {
     state = { revenu: 0, charges: [], depenses: [], ...data.data };
+    // Force number type (Supabase peut renvoyer des strings)
+    state.revenu = parseFloat(state.revenu) || 0;
+    if (!Array.isArray(state.charges)) state.charges = [];
+    if (!Array.isArray(state.depenses)) state.depenses = [];
+    state.charges = state.charges.map(c => ({ ...c, amount: parseFloat(c.amount) || 0 }));
+    state.depenses = state.depenses.map(d => ({ ...d, amount: parseFloat(d.amount) || 0 }));
   } else {
     await supabaseClient.from('budgets').insert({ id: budgetId, data: state });
   }
@@ -809,6 +815,11 @@ function subscribeRealtime() {
     .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'budgets', filter: `id=eq.${budgetId}` }, payload => {
       if (payload.new?.data) {
         state = payload.new.data;
+        state.revenu = parseFloat(state.revenu) || 0;
+        if (!Array.isArray(state.charges)) state.charges = [];
+        if (!Array.isArray(state.depenses)) state.depenses = [];
+        state.charges = state.charges.map(c => ({ ...c, amount: parseFloat(c.amount) || 0 }));
+        state.depenses = state.depenses.map(d => ({ ...d, amount: parseFloat(d.amount) || 0 }));
         document.getElementById('revenu-input').value = state.revenu || '';
         renderAll(); showToast('Synchronisé ✓', 'ok');
       }
@@ -962,14 +973,19 @@ async function analyzeImage(dataUrl, mimeType) {
       body: JSON.stringify({ image: base64, mimeType }),
     });
     document.getElementById('scan-loading').style.display = 'none';
-    if (!resp.ok) throw new Error('API ' + resp.status);
+    if (!resp.ok) {
+      const errText = await resp.text();
+      console.error('Scan API error:', resp.status, errText);
+      throw new Error('Erreur ' + resp.status);
+    }
     const parsed = await resp.json();
     if (parsed.error) throw new Error(parsed.error);
     showResultCard(parsed);
   } catch(e) {
     document.getElementById('scan-loading').style.display = 'none';
+    console.error('OCR error:', e);
     showManualForm();
-    showToast('Lecture impossible — saisie manuelle', 'err');
+    showToast('Scan échoué (' + e.message + ') — saisie manuelle', 'err');
   }
 }
 
@@ -1114,7 +1130,10 @@ function importCSV() {
 function cancelCSV() { csvPending=[]; document.getElementById('csv-preview').style.display='none'; document.getElementById('csv-input').value=''; }
 
 // ── UTILS ──────────────────────────────────────────────────────
-function fmt(n) { return Math.round((n||0)*100)/100 .toLocaleString('fr-FR',{style:'currency',currency:'EUR',maximumFractionDigits:0}); }
+function fmt(n) {
+  const v = Math.round((n || 0) * 100) / 100;
+  return v.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 });
+}
 function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 function uid() { return Math.random().toString(36).substr(2,9); }
 function todayISO() { return new Date().toISOString().split('T')[0]; }
